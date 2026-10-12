@@ -1,0 +1,30 @@
+{
+  "name": "wepair",
+  "version": "1.0.0",
+  "description": "**WePair** is an Automobile Public Service Platform designed to connect vehicle owners in need of emergency assistance, maintenance, and vehicle care with verified, nearby automotive service providers.",
+  "private": true,
+  "workspaces": [
+    "frontend",
+    "backend"
+  ],
+  "scripts": {
+    "dev:frontend": "npm run dev --workspace=frontend",
+    "dev:backend": "npm run start:dev --workspace=backend",
+    "build:frontend": "npm run build --workspace=frontend",
+    "build:backend": "npm run build --workspace=backend",
+    "build": "npm run build:backend && npm run build:frontend"
+  },
+
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SakshathNV/WePair.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/SakshathNV/WePair/issues"
+  },
+  "homepage": "https://github.com/SakshathNV/WePair#readme"
+}
