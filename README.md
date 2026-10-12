@@ -15,8 +15,17 @@ The long-term vision encompasses an integrated ecosystem for automotive assistan
 *(Note: These capabilities represent the future strategic roadmap and will be implemented incrementally per approved milestones.)*
 
 ## 3. Approved Technology Foundation
-- **Frontend**: React, TypeScript, Vite, Tailwind CSS
-- **Backend**: NestJS, TypeScript (using the Express HTTP adapter)
+- **Frontend**: React + TypeScript + Vite
+- **Styling**: Tailwind CSS
+- **Backend**: NestJS + TypeScript (using NestJS's Express HTTP adapter)
+- **Database**: MongoDB Atlas
+- **ODM**: Mongoose, integrated with NestJS using `@nestjs/mongoose`
+
+### Technology Stack Invariants & Mandatory Rules:
+- **ODM**: Mongoose is the mandatory and exclusive tool for all MongoDB data modeling and database interactions. Prisma or any other ORM/ODM is strictly prohibited.
+- **Backend Architecture**: Built strictly on NestJS using its standard Express adapter. A separate Express backend is prohibited.
+- **Stack Immutability**: The confirmed technology stack shall not be altered without explicit founder approval.
+- **Dependency Control**: No additional libraries, frameworks, infrastructure, or services shall be introduced without evaluating necessity and obtaining prior founder approval.
 
 ## 4. Current Development Phase
 - **Current Milestone**: Project Setup & Foundation Only (Milestone 1).

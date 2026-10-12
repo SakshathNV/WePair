@@ -14,17 +14,22 @@
   - NestJS initialized with standard Express HTTP adapter and TypeScript.
   - Architecture organized according to standard NestJS module conventions.
   - Production compilation verified (`nest build`).
+- **Confirmed & Approved Technology Stack**:
+  - **Frontend**: React + TypeScript + Vite
+  - **Styling**: Tailwind CSS
+  - **Backend**: NestJS + TypeScript (using NestJS's Express HTTP adapter; no separate Express backend)
+  - **Database**: MongoDB Atlas
+  - **ODM**: Mongoose integrated via `@nestjs/mongoose` (Exclusive ODM; Prisma or other ORMs are strictly prohibited)
+  - **Technology Invariants**: The confirmed stack is locked. No additional libraries, frameworks, infrastructure, or services may be introduced without prior necessity evaluation and explicit founder approval.
 - **Root Workspace Orchestration**:
   - Root `package.json` configured with npm workspaces (`frontend`, `backend`) and unified scripts (`npm run build`, `npm run dev:frontend`, `npm run dev:backend`).
   - Architectural blueprint reviewed: `/home/jass/Downloads/Automobile_Public_Service_System_Design_AUDITED_FINAL.pdf`.
 
-## 2. What Remains Unfinished / Intentionally Deferred
-Per strict execution boundaries:
-- No final UI design, custom layouts, or color styling applied (awaiting Founder design decisions).
-- No mock data or fake feature code created.
-- No database schemas or ORM installed (awaiting database decision).
-- No authentication or authorization logic written.
-- No dispatch engine, real-time messaging, map provider, or payment gateway integrated.
+## 2. Technical Boundaries & Implementation Status
+Per strict execution rules:
+- **Technology Stack Confirmed**: Technology decisions (MongoDB Atlas + `@nestjs/mongoose`, React/Tailwind, NestJS/Express) are locked and documented.
+- **Feature Authorization Scope**: These decisions confirm the technology stack only and do not authorize implementing feature logic beyond the confirmed scope.
+- **Data Modeling**: All future database interactions and schemas must strictly use Mongoose. Prisma or other ORMs are strictly forbidden.
 
 ## 3. Decisions Awaiting Founder Approval
 The following architectural decisions remain unapproved:
@@ -32,18 +37,15 @@ The following architectural decisions remain unapproved:
    - Primary, secondary, accent, and background colors.
    - Typography, border radii, component style preferences.
    - Any preferred UI primitive library (e.g. Radix/shadcn vs pure Tailwind).
-2. **Database & Data Modeling**:
-   - Relational (PostgreSQL) vs Document (MongoDB from reference blueprint).
-   - ORM / query builder (Prisma, TypeORM, or Mongoose).
-3. **Authentication Strategy**:
+2. **Authentication Strategy**:
    - JWT vs Session tokens; Role-based access control (Customer, Provider, Admin).
-4. **Real-time Dispatch Engine**:
+3. **Real-time Dispatch Engine**:
    - WebSocket (Socket.IO via NestJS Gateways) vs SSE; Redis for hot coordination.
-5. **Third-Party Services**:
+4. **Third-Party Services**:
    - Geolocation & maps (Google Maps vs Mapbox).
    - Payment provider (Stripe, Razorpay, etc.).
    - SMS / Push notifications.
 
 ## 4. Next Planned Milestone
-- **Milestone 2**: Receive Founder UI design direction (primary & secondary colors, typography, layout preferences) and commence structured UI foundation and core data architecture.
+- **Milestone 2**: Receive Founder authorization for Mongoose schema configuration and approved domain feature milestones.
 
