@@ -15,6 +15,10 @@ export class CreateUserDto {
   email?: string;
 
   @IsOptional()
+  @IsString()
+  password?: string;
+
+  @IsOptional()
   @IsEnum(UserRole)
   role?: UserRole = UserRole.CUSTOMER;
 }

@@ -3,6 +3,7 @@ import {
   NotFoundException,
   BadRequestException,
   ForbiddenException,
+  Optional,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
@@ -18,6 +19,9 @@ import { VehiclesService } from '../vehicles/vehicles.service.js';
 import { CatalogService } from '../catalog/catalog.service.js';
 import { ProvidersService } from '../providers/providers.service.js';
 import { DispatchService } from '../dispatch/dispatch.service.js';
+import { EventsGateway } from '../gateway/events.gateway.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
+import { NotificationType } from '../notifications/schemas/notification.schema.js';
 
 @Injectable()
 export class JobsService {
@@ -28,6 +32,8 @@ export class JobsService {
     private readonly catalogService: CatalogService,
     private readonly providersService: ProvidersService,
     private readonly dispatchService: DispatchService,
+    @Optional() private readonly eventsGateway?: EventsGateway,
+    @Optional() private readonly notificationsService?: NotificationsService,
   ) {}
 
   async create(dto: CreateJobDto): Promise<{ job: Job; dispatchResult: any }> {
@@ -73,7 +79,10 @@ export class JobsService {
     const jobId = (savedJob as any).id || (savedJob as any)._id.toString();
 
     // Link job to parent ServiceCase
-    await this.casesService.addJobToCase((serviceCase as any).id || (serviceCase as any)._id.toString(), jobId);
+    await this.casesService.addJobToCase(
+      (serviceCase as any).id || (serviceCase as any)._id.toString(),
+      jobId,
+    );
 
     // Run 5-by-5 Dispatch Engine
     const dispatchResult = await this.dispatchService.initiateDispatch(
@@ -93,7 +102,32 @@ export class JobsService {
         note: 'All provider batches exhausted. Partner escalation required.',
       });
       await savedJob.save();
+    } else {
+      // Broadcast dispatch push to notified providers
+      this.eventsGateway?.emitDispatchNotification(
+        dispatchResult.session.currentlyNotifiedProviderIds,
+        {
+          jobId,
+          serviceName: serviceItem.name,
+          quoteAmount: serviceItem.basePrice,
+          latitude: serviceCase.location.latitude,
+          longitude: serviceCase.location.longitude,
+        },
+      );
     }
+
+    // Broadcast realtime event
+    this.eventsGateway?.emitJobUpdate(jobId, savedJob.status, savedJob);
+
+    // Create notification for customer
+    this.notificationsService?.create(
+      serviceCase.customerId,
+      NotificationType.JOB_CREATED,
+      'Assistance Request Dispatched',
+      `Searching for verified nearby providers for ${serviceItem.name}.`,
+      'IN_APP',
+      { jobId },
+    );
 
     return { job: savedJob, dispatchResult };
   }
@@ -135,7 +169,23 @@ export class JobsService {
       note: `Claim won and assigned to provider ${dto.providerId}`,
     });
 
-    return job.save();
+    const saved = await job.save();
+
+    // Broadcast realtime WebSocket update
+    this.eventsGateway?.emitJobUpdate(id, JobStatus.ASSIGNED, saved);
+
+    // Notify customer
+    const serviceCase = await this.casesService.findById(job.caseId);
+    this.notificationsService?.create(
+      serviceCase.customerId,
+      NotificationType.JOB_ASSIGNED,
+      'Provider Assigned!',
+      `A verified service provider has accepted your request.`,
+      'IN_APP',
+      { jobId: id, providerId: dto.providerId },
+    );
+
+    return saved;
   }
 
   async updateEnRoute(id: string, providerId: string): Promise<Job> {
@@ -156,7 +206,20 @@ export class JobsService {
       note: 'Provider is en route to breakdown location',
     });
 
-    return job.save();
+    const saved = await job.save();
+    this.eventsGateway?.emitJobUpdate(id, JobStatus.EN_ROUTE, saved);
+
+    const serviceCase = await this.casesService.findById(job.caseId);
+    this.notificationsService?.create(
+      serviceCase.customerId,
+      NotificationType.PROVIDER_EN_ROUTE,
+      'Technician On The Way',
+      `Your technician is now travelling to your location.`,
+      'IN_APP',
+      { jobId: id },
+    );
+
+    return saved;
   }
 
   async updateArrived(id: string, providerId: string): Promise<Job> {
@@ -177,7 +240,20 @@ export class JobsService {
       note: 'Provider arrived on scene. Awaiting customer OTP verification.',
     });
 
-    return job.save();
+    const saved = await job.save();
+    this.eventsGateway?.emitJobUpdate(id, JobStatus.ARRIVED, saved);
+
+    const serviceCase = await this.casesService.findById(job.caseId);
+    this.notificationsService?.create(
+      serviceCase.customerId,
+      NotificationType.PROVIDER_ARRIVED,
+      'Technician Has Arrived',
+      `Please share OTP ${job.otp} with technician to start service.`,
+      'IN_APP',
+      { jobId: id, otp: job.otp },
+    );
+
+    return saved;
   }
 
   async startService(id: string, providerId: string, dto: VerifyOtpDto): Promise<Job> {
@@ -203,7 +279,20 @@ export class JobsService {
       note: 'OTP verified. Service execution underway.',
     });
 
-    return job.save();
+    const saved = await job.save();
+    this.eventsGateway?.emitJobUpdate(id, JobStatus.SERVICE_STARTED, saved);
+
+    const serviceCase = await this.casesService.findById(job.caseId);
+    this.notificationsService?.create(
+      serviceCase.customerId,
+      NotificationType.SERVICE_STARTED,
+      'Service In Progress',
+      `OTP verified successfully. Work has commenced.`,
+      'IN_APP',
+      { jobId: id },
+    );
+
+    return saved;
   }
 
   async completeService(id: string, providerId: string): Promise<Job> {
@@ -229,6 +318,18 @@ export class JobsService {
     // Release provider back to ONLINE in database
     await this.providersService.updateStatus(providerId, ProviderStatus.ONLINE);
 
+    this.eventsGateway?.emitJobUpdate(id, JobStatus.COMPLETED, saved);
+
+    const serviceCase = await this.casesService.findById(job.caseId);
+    this.notificationsService?.create(
+      serviceCase.customerId,
+      NotificationType.SERVICE_COMPLETED,
+      'Service Completed!',
+      `Your service has been completed. Total amount due: ₹${job.quoteAmount}.`,
+      'IN_APP',
+      { jobId: id, amount: job.quoteAmount },
+    );
+
     return saved;
   }
 
@@ -253,12 +354,23 @@ export class JobsService {
       await this.providersService.updateStatus(job.providerId, ProviderStatus.ONLINE);
     }
 
+    this.eventsGateway?.emitJobUpdate(id, JobStatus.CANCELLED, saved);
+
+    const serviceCase = await this.casesService.findById(job.caseId);
+    this.notificationsService?.create(
+      serviceCase.customerId,
+      NotificationType.JOB_CANCELLED,
+      'Job Cancelled',
+      `Request was cancelled: ${job.cancellationReason}`,
+      'IN_APP',
+      { jobId: id },
+    );
+
     return saved;
   }
 
   /**
    * Escalation: spawn linked downstream job under same service case
-   * (e.g. roadside repair cannot resolve on-site -> creates linked towing job)
    */
   async escalate(id: string, dto: EscalateJobDto): Promise<{ originalJob: Job; newJob: Job }> {
     const originalJob = await this.jobModel.findById(id).exec();
@@ -266,7 +378,10 @@ export class JobsService {
       throw new NotFoundException(`Job with id '${id}' not found`);
     }
 
-    if (originalJob.status === JobStatus.SERVICE_STARTED || originalJob.status === JobStatus.ARRIVED) {
+    if (
+      originalJob.status === JobStatus.SERVICE_STARTED ||
+      originalJob.status === JobStatus.ARRIVED
+    ) {
       originalJob.timeline.push({
         status: originalJob.status,
         timestamp: new Date(),

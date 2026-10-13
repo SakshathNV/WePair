@@ -35,6 +35,7 @@ export class UsersService {
       name: dto.name,
       phone: dto.phone,
       email: dto.email,
+      password: dto.password,
       role: dto.role ?? UserRole.CUSTOMER,
       isActive: true,
     });
@@ -56,5 +57,9 @@ export class UsersService {
 
   async findByPhone(phone: string): Promise<User | null> {
     return this.userModel.findOne({ phone }).exec();
+  }
+
+  async findByPhoneWithPassword(phone: string): Promise<UserDocument | null> {
+    return this.userModel.findOne({ phone }).select('+password').exec();
   }
 }

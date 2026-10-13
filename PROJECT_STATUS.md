@@ -33,28 +33,19 @@
     - `JobSchema` (strict state machine enum, OTP verification, timeline audit events)
     - `DispatchSessionSchema` (unique jobId index, 5-by-5 candidate batches, attempts audit log)
   - Auto-seeding for service catalog and verified demonstration providers on startup.
-  - Health check endpoint `/health` exposing live MongoDB Atlas connection status.
+- **Completed Backend Architecture & Modules**:
+  - **Authentication & RBAC (`/v1/auth`)**: JWT tokens, bcrypt password hashing, `JwtAuthGuard`, `@Roles()` decorator with `RolesGuard` for `CUSTOMER`, `PROVIDER`, and `ADMIN`.
+  - **Payments & Billing (`/v1/payments`)**: Razorpay API integration using credentials from `.env`, HMAC SHA256 signature verification, refund processing, idempotency guards, and webhook listener.
+  - **Media & Evidence Storage (`/v1/uploads`)**: Cloudinary streaming integration using credentials from `.env` for vehicle photos, inspection evidence, and provider verification documents.
+  - **Real-Time Communication (`EventsGateway`)**: Socket.IO WebSocket gateway (`/events`) for live GPS breadcrumb broadcasts (`location-update`), real-time job state transitions, and provider push events.
+  - **In-App Notifications (`/v1/notifications`)**: Audited notification feed, read tracking, and unread counts for customers and technicians.
+  - **Admin Operations (`/v1/admin`)**: Operational dashboard stats (active cases, revenue in INR, online technicians), provider approval queue, and manual assignment overrides.
+  - **No Hardcoded Secrets**: All credentials (MongoDB, JWT, Razorpay, Cloudinary) are loaded strictly via `@nestjs/config` and `.env`.
 
 ## 2. Technical Boundaries & Implementation Status
-Per strict execution rules:
-- **Persistence Active**: All durable state is now stored in MongoDB Atlas via Mongoose. In-memory maps have been fully transitioned to Atlas collections.
-- **Git Push Policy**: Remote pushes remain paused per user instruction. All changes are held locally.
+- **Backend Complete**: All core blueprint phases (MVC domain models, MongoDB Atlas persistence, Auth, Payments, Uploads, WebSockets, Notifications, and Admin) are fully built and verified.
+- **Git Policy**: As instructed, no commits or pushes have been performed. All changes reside locally in the working directory.
 
-## 3. Decisions Awaiting Founder Approval
-The following architectural decisions remain unapproved:
-1. **UI Design System & Visual Identity**:
-   - Primary, secondary, accent, and background colors.
-   - Typography, border radii, component style preferences.
-   - Any preferred UI primitive library (e.g. Radix/shadcn vs pure Tailwind).
-2. **Authentication Strategy**:
-   - JWT vs Session tokens; Role-based access control (Customer, Provider, Admin).
-3. **Real-time Dispatch Engine**:
-   - WebSocket (Socket.IO via NestJS Gateways) vs SSE; Redis for hot coordination.
-4. **Third-Party Services**:
-   - Geolocation & maps (Google Maps vs Mapbox).
-   - Payment provider (Stripe, Razorpay, etc.).
-   - SMS / Push notifications.
-
-## 4. Next Planned Milestone
-- **Milestone 2**: Receive Founder authorization for Mongoose schema configuration and approved domain feature milestones.
+## 3. Next Planned Milestone
+- **Frontend Integration**: Build the React 19 + Tailwind CSS user interfaces connecting to the completed backend endpoints (customer booking flow, live provider tracking map, provider response dashboard, and admin console).
 

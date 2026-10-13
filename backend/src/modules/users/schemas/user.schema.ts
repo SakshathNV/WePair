@@ -12,6 +12,7 @@ export type UserDocument = HydratedDocument<User>;
       ret.id = ret._id.toString();
       delete ret._id;
       delete ret.__v;
+      delete ret.password;
       return ret;
     },
   },
@@ -27,6 +28,9 @@ export class User {
 
   @Prop()
   email?: string;
+
+  @Prop({ required: true, select: false })
+  password: string;
 
   @Prop({ required: true, enum: UserRole, default: UserRole.CUSTOMER })
   role: UserRole;

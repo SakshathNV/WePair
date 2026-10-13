@@ -8,6 +8,7 @@ import { VehiclesModule } from '../vehicles/vehicles.module.js';
 import { CatalogModule } from '../catalog/catalog.module.js';
 import { ProvidersModule } from '../providers/providers.module.js';
 import { DispatchModule } from '../dispatch/dispatch.module.js';
+import { NotificationsModule } from '../notifications/notifications.module.js';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { DispatchModule } from '../dispatch/dispatch.module.js';
     CatalogModule,
     ProvidersModule,
     DispatchModule,
+    NotificationsModule,
   ],
   controllers: [JobsController],
   providers: [JobsService],
