@@ -4,7 +4,9 @@ import {
   BadRequestException,
   ForbiddenException,
 } from '@nestjs/common';
-import { Job, JobTimelineEvent } from './entities/job.entity.js';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
+import { Job, JobDocument, JobTimelineEvent } from './schemas/job.schema.js';
 import { CreateJobDto } from './dto/create-job.dto.js';
 import { AcceptJobDto } from './dto/accept-job.dto.js';
 import { VerifyOtpDto } from './dto/verify-otp.dto.js';
@@ -16,13 +18,11 @@ import { VehiclesService } from '../vehicles/vehicles.service.js';
 import { CatalogService } from '../catalog/catalog.service.js';
 import { ProvidersService } from '../providers/providers.service.js';
 import { DispatchService } from '../dispatch/dispatch.service.js';
-import { randomUUID } from 'node:crypto';
 
 @Injectable()
 export class JobsService {
-  private readonly jobs = new Map<string, Job>();
-
   constructor(
+    @InjectModel(Job.name) private readonly jobModel: Model<JobDocument>,
     private readonly casesService: CasesService,
     private readonly vehiclesService: VehiclesService,
     private readonly catalogService: CatalogService,
@@ -31,60 +31,54 @@ export class JobsService {
   ) {}
 
   async create(dto: CreateJobDto): Promise<{ job: Job; dispatchResult: any }> {
-    const serviceCase = this.casesService.findById(dto.caseId);
-    const vehicle = this.vehiclesService.findById(serviceCase.vehicleId);
-    const serviceItem = this.catalogService.findById(dto.serviceId);
+    const serviceCase = await this.casesService.findById(dto.caseId);
+    const vehicle = await this.vehiclesService.findById(serviceCase.vehicleId);
+    const serviceItem = await this.catalogService.findById(dto.serviceId);
 
-    // Verify compatibility
+    // Verify vehicle category compatibility
     if (!serviceItem.compatibleVehicleCategories.includes(vehicle.category)) {
       throw new BadRequestException(
         `Service '${serviceItem.name}' is not compatible with vehicle category '${vehicle.category}'.`,
       );
     }
 
-    // Generate 4-digit OTP for arrival & service handshake
+    // Generate 4-digit verification OTP
     const otp = Math.floor(1000 + Math.random() * 9000).toString();
 
     const initialTimeline: JobTimelineEvent[] = [
       {
         status: JobStatus.CREATED,
         timestamp: new Date(),
-        note: 'Incident job registered',
+        note: 'Incident job registered in durable state',
+      },
+      {
+        status: JobStatus.SEARCHING,
+        timestamp: new Date(),
+        note: '5-by-5 Dispatch Engine initiated',
       },
     ];
 
-    const job: Job = {
-      id: `job_${randomUUID().substring(0, 8)}`,
-      caseId: serviceCase.id,
-      serviceId: serviceItem.id,
+    const job = new this.jobModel({
+      caseId: (serviceCase as any).id || (serviceCase as any)._id.toString(),
+      serviceId: (serviceItem as any).id || (serviceItem as any)._id.toString(),
       serviceName: serviceItem.name,
       category: serviceItem.category,
-      status: JobStatus.CREATED,
+      status: JobStatus.SEARCHING,
       quoteAmount: serviceItem.basePrice,
       otp,
       timeline: initialTimeline,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-
-    this.jobs.set(job.id, job);
-
-    // Link job to parent ServiceCase
-    this.casesService.addJobToCase(serviceCase.id, job.id);
-
-    // Transition to SEARCHING
-    JobStateMachine.validateTransition(job.status, JobStatus.SEARCHING);
-    job.status = JobStatus.SEARCHING;
-    job.timeline.push({
-      status: JobStatus.SEARCHING,
-      timestamp: new Date(),
-      note: '5-by-5 Dispatch Engine initiated',
     });
 
-    // Run 5-by-5 Dispatch Runtime
-    const dispatchResult = this.dispatchService.initiateDispatch(
-      job.id,
-      serviceCase.id,
+    const savedJob = await job.save();
+    const jobId = (savedJob as any).id || (savedJob as any)._id.toString();
+
+    // Link job to parent ServiceCase
+    await this.casesService.addJobToCase((serviceCase as any).id || (serviceCase as any)._id.toString(), jobId);
+
+    // Run 5-by-5 Dispatch Engine
+    const dispatchResult = await this.dispatchService.initiateDispatch(
+      jobId,
+      (serviceCase as any).id || (serviceCase as any)._id.toString(),
       serviceCase.location.latitude,
       serviceCase.location.longitude,
       serviceItem.requiredSkills,
@@ -92,44 +86,45 @@ export class JobsService {
     );
 
     if (dispatchResult.exhausted) {
-      // No eligible providers in proximity
-      JobStateMachine.validateTransition(job.status, JobStatus.NO_PROVIDER);
-      job.status = JobStatus.NO_PROVIDER;
-      job.timeline.push({
+      savedJob.status = JobStatus.NO_PROVIDER;
+      savedJob.timeline.push({
         status: JobStatus.NO_PROVIDER,
         timestamp: new Date(),
         note: 'All provider batches exhausted. Partner escalation required.',
       });
+      await savedJob.save();
     }
 
-    job.updatedAt = new Date();
-    return { job, dispatchResult };
+    return { job: savedJob, dispatchResult };
   }
 
-  findAll(): Job[] {
-    return Array.from(this.jobs.values());
+  async findAll(): Promise<Job[]> {
+    return this.jobModel.find().exec();
   }
 
-  findById(id: string): Job {
-    const job = this.jobs.get(id);
+  async findById(id: string): Promise<Job> {
+    const job = await this.jobModel.findById(id).exec();
     if (!job) {
       throw new NotFoundException(`Job with id '${id}' not found`);
     }
     return job;
   }
 
-  findByCaseId(caseId: string): Job[] {
-    return Array.from(this.jobs.values()).filter((j) => j.caseId === caseId);
+  async findByCaseId(caseId: string): Promise<Job[]> {
+    return this.jobModel.find({ caseId }).exec();
   }
 
   /**
    * Atomic Provider Acceptance
    */
   async accept(id: string, dto: AcceptJobDto): Promise<Job> {
-    const job = this.findById(id);
+    const job = await this.jobModel.findById(id).exec();
+    if (!job) {
+      throw new NotFoundException(`Job with id '${id}' not found`);
+    }
 
     // Verify atomic claim with Dispatch Engine (mutex + CAS)
-    await this.dispatchService.attemptClaim(id, dto.providerId, () => job.status);
+    await this.dispatchService.attemptClaim(id, dto.providerId, async () => job.status);
 
     JobStateMachine.validateTransition(job.status, JobStatus.ASSIGNED);
     job.status = JobStatus.ASSIGNED;
@@ -139,13 +134,16 @@ export class JobsService {
       timestamp: new Date(),
       note: `Claim won and assigned to provider ${dto.providerId}`,
     });
-    job.updatedAt = new Date();
 
-    return job;
+    return job.save();
   }
 
-  updateEnRoute(id: string, providerId: string): Job {
-    const job = this.findById(id);
+  async updateEnRoute(id: string, providerId: string): Promise<Job> {
+    const job = await this.jobModel.findById(id).exec();
+    if (!job) {
+      throw new NotFoundException(`Job with id '${id}' not found`);
+    }
+
     if (job.providerId !== providerId) {
       throw new ForbiddenException('Only the assigned provider can update transit status.');
     }
@@ -157,12 +155,16 @@ export class JobsService {
       timestamp: new Date(),
       note: 'Provider is en route to breakdown location',
     });
-    job.updatedAt = new Date();
-    return job;
+
+    return job.save();
   }
 
-  updateArrived(id: string, providerId: string): Job {
-    const job = this.findById(id);
+  async updateArrived(id: string, providerId: string): Promise<Job> {
+    const job = await this.jobModel.findById(id).exec();
+    if (!job) {
+      throw new NotFoundException(`Job with id '${id}' not found`);
+    }
+
     if (job.providerId !== providerId) {
       throw new ForbiddenException('Only the assigned provider can mark arrival.');
     }
@@ -174,17 +176,21 @@ export class JobsService {
       timestamp: new Date(),
       note: 'Provider arrived on scene. Awaiting customer OTP verification.',
     });
-    job.updatedAt = new Date();
-    return job;
+
+    return job.save();
   }
 
-  startService(id: string, providerId: string, dto: VerifyOtpDto): Job {
-    const job = this.findById(id);
+  async startService(id: string, providerId: string, dto: VerifyOtpDto): Promise<Job> {
+    const job = await this.jobModel.findById(id).exec();
+    if (!job) {
+      throw new NotFoundException(`Job with id '${id}' not found`);
+    }
+
     if (job.providerId !== providerId) {
       throw new ForbiddenException('Only the assigned provider can start service.');
     }
 
-    // OTP validation per Section 4 & 13 of Blueprint
+    // OTP validation per Blueprint Section 4 & 13
     if (job.otp !== dto.otp) {
       throw new BadRequestException('Invalid OTP. Customer verification handshake failed.');
     }
@@ -196,12 +202,16 @@ export class JobsService {
       timestamp: new Date(),
       note: 'OTP verified. Service execution underway.',
     });
-    job.updatedAt = new Date();
-    return job;
+
+    return job.save();
   }
 
-  completeService(id: string, providerId: string): Job {
-    const job = this.findById(id);
+  async completeService(id: string, providerId: string): Promise<Job> {
+    const job = await this.jobModel.findById(id).exec();
+    if (!job) {
+      throw new NotFoundException(`Job with id '${id}' not found`);
+    }
+
     if (job.providerId !== providerId) {
       throw new ForbiddenException('Only the assigned provider can complete service.');
     }
@@ -213,16 +223,21 @@ export class JobsService {
       timestamp: new Date(),
       note: 'Service successfully delivered. Ready for payment settlement.',
     });
-    job.updatedAt = new Date();
 
-    // Release provider back to ONLINE
-    this.providersService.updateStatus(providerId, ProviderStatus.ONLINE);
+    const saved = await job.save();
 
-    return job;
+    // Release provider back to ONLINE in database
+    await this.providersService.updateStatus(providerId, ProviderStatus.ONLINE);
+
+    return saved;
   }
 
-  cancel(id: string, reason?: string): Job {
-    const job = this.findById(id);
+  async cancel(id: string, reason?: string): Promise<Job> {
+    const job = await this.jobModel.findById(id).exec();
+    if (!job) {
+      throw new NotFoundException(`Job with id '${id}' not found`);
+    }
+
     JobStateMachine.validateTransition(job.status, JobStatus.CANCELLED);
     job.status = JobStatus.CANCELLED;
     job.cancellationReason = reason ?? 'Cancelled by user or system policy';
@@ -231,13 +246,14 @@ export class JobsService {
       timestamp: new Date(),
       note: `Cancelled: ${job.cancellationReason}`,
     });
-    job.updatedAt = new Date();
+
+    const saved = await job.save();
 
     if (job.providerId) {
-      this.providersService.updateStatus(job.providerId, ProviderStatus.ONLINE);
+      await this.providersService.updateStatus(job.providerId, ProviderStatus.ONLINE);
     }
 
-    return job;
+    return saved;
   }
 
   /**
@@ -245,15 +261,18 @@ export class JobsService {
    * (e.g. roadside repair cannot resolve on-site -> creates linked towing job)
    */
   async escalate(id: string, dto: EscalateJobDto): Promise<{ originalJob: Job; newJob: Job }> {
-    const originalJob = this.findById(id);
+    const originalJob = await this.jobModel.findById(id).exec();
+    if (!originalJob) {
+      throw new NotFoundException(`Job with id '${id}' not found`);
+    }
 
-    // If original job is still in progress, complete or wrap it
     if (originalJob.status === JobStatus.SERVICE_STARTED || originalJob.status === JobStatus.ARRIVED) {
       originalJob.timeline.push({
         status: originalJob.status,
         timestamp: new Date(),
         note: `Escalated incident to downstream job (${dto.newServiceId})`,
       });
+      await originalJob.save();
     }
 
     const { job: newJob } = await this.create({

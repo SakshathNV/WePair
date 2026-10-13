@@ -21,15 +21,24 @@
   - **Database**: MongoDB Atlas
   - **ODM**: Mongoose integrated via `@nestjs/mongoose` (Exclusive ODM; Prisma or other ORMs are strictly prohibited)
   - **Technology Invariants**: The confirmed stack is locked. No additional libraries, frameworks, infrastructure, or services may be introduced without prior necessity evaluation and explicit founder approval.
-- **Root Workspace Orchestration**:
-  - Root `package.json` configured with npm workspaces (`frontend`, `backend`) and unified scripts (`npm run build`, `npm run dev:frontend`, `npm run dev:backend`).
-  - Architectural blueprint reviewed: `/home/jass/Downloads/Automobile_Public_Service_System_Design_AUDITED_FINAL.pdf`.
+- **Database & Persistence Layer**:
+  - MongoDB Atlas successfully connected using `@nestjs/mongoose` and `mongoose`.
+  - Credentials securely loaded via environment variables (`backend/.env`, git-ignored).
+  - Mongoose schemas implemented with timestamps, virtual ID transforms, and indexing:
+    - `UserSchema` (unique phone index, role enum)
+    - `VehicleSchema` (registration uppercase index, category & fuelType enums)
+    - `ServiceItemSchema` (unique code index, service category enum)
+    - `ProviderSchema` (status & user indexes, geospatial coordinates with 2dsphere index)
+    - `ServiceCaseSchema` (sparse unique idempotencyKey index, customer & vehicle references)
+    - `JobSchema` (strict state machine enum, OTP verification, timeline audit events)
+    - `DispatchSessionSchema` (unique jobId index, 5-by-5 candidate batches, attempts audit log)
+  - Auto-seeding for service catalog and verified demonstration providers on startup.
+  - Health check endpoint `/health` exposing live MongoDB Atlas connection status.
 
 ## 2. Technical Boundaries & Implementation Status
 Per strict execution rules:
-- **Technology Stack Confirmed**: Technology decisions (MongoDB Atlas + `@nestjs/mongoose`, React/Tailwind, NestJS/Express) are locked and documented.
-- **Feature Authorization Scope**: These decisions confirm the technology stack only and do not authorize implementing feature logic beyond the confirmed scope.
-- **Data Modeling**: All future database interactions and schemas must strictly use Mongoose. Prisma or other ORMs are strictly forbidden.
+- **Persistence Active**: All durable state is now stored in MongoDB Atlas via Mongoose. In-memory maps have been fully transitioned to Atlas collections.
+- **Git Push Policy**: Remote pushes remain paused per user instruction. All changes are held locally.
 
 ## 3. Decisions Awaiting Founder Approval
 The following architectural decisions remain unapproved:

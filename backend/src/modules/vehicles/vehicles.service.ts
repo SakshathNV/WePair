@@ -1,15 +1,17 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { Vehicle } from './entities/vehicle.entity.js';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
+import { Vehicle, VehicleDocument } from './schemas/vehicle.schema.js';
 import { CreateVehicleDto } from './dto/create-vehicle.dto.js';
-import { randomUUID } from 'node:crypto';
 
 @Injectable()
 export class VehiclesService {
-  private readonly vehicles = new Map<string, Vehicle>();
+  constructor(
+    @InjectModel(Vehicle.name) private readonly vehicleModel: Model<VehicleDocument>,
+  ) {}
 
-  create(dto: CreateVehicleDto): Vehicle {
-    const vehicle: Vehicle = {
-      id: `veh_${randomUUID().substring(0, 8)}`,
+  async create(dto: CreateVehicleDto): Promise<Vehicle> {
+    const vehicle = new this.vehicleModel({
       ownerId: dto.ownerId,
       category: dto.category,
       fuelType: dto.fuelType,
@@ -17,27 +19,24 @@ export class VehiclesService {
       model: dto.model,
       registrationNumber: dto.registrationNumber.toUpperCase(),
       year: dto.year,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
+    });
 
-    this.vehicles.set(vehicle.id, vehicle);
-    return vehicle;
+    return vehicle.save();
   }
 
-  findAll(): Vehicle[] {
-    return Array.from(this.vehicles.values());
+  async findAll(): Promise<Vehicle[]> {
+    return this.vehicleModel.find().exec();
   }
 
-  findById(id: string): Vehicle {
-    const vehicle = this.vehicles.get(id);
+  async findById(id: string): Promise<Vehicle> {
+    const vehicle = await this.vehicleModel.findById(id).exec();
     if (!vehicle) {
       throw new NotFoundException(`Vehicle with id '${id}' not found`);
     }
     return vehicle;
   }
 
-  findByOwnerId(ownerId: string): Vehicle[] {
-    return Array.from(this.vehicles.values()).filter((v) => v.ownerId === ownerId);
+  async findByOwnerId(ownerId: string): Promise<Vehicle[]> {
+    return this.vehicleModel.find({ ownerId }).exec();
   }
 }

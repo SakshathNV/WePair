@@ -1,57 +1,60 @@
-import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
-import { User } from './entities/user.entity.js';
+import { Injectable, NotFoundException } from '@nestjs/common';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
+import { User, UserDocument } from './schemas/user.schema.js';
 import { CreateUserDto } from './dto/create-user.dto.js';
 import { UserRole } from '../../common/enums/index.js';
-import { randomUUID } from 'node:crypto';
 
 @Injectable()
 export class UsersService {
-  private readonly users = new Map<string, User>();
+  constructor(
+    @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
+  ) {}
 
-  constructor() {
-    // Seed default administrative and demo accounts
-    this.create({
-      name: 'System Admin',
-      phone: '+919876543210',
-      email: 'admin@wepair.app',
-      role: UserRole.ADMIN,
-    });
+  async onModuleInit() {
+    // Seed default admin account if not already present in Atlas
+    const count = await this.userModel.countDocuments();
+    if (count === 0) {
+      await this.userModel.create({
+        phone: '+919876543210',
+        name: 'System Admin',
+        email: 'admin@wepair.app',
+        role: UserRole.ADMIN,
+        isActive: true,
+      });
+    }
   }
 
-  create(dto: CreateUserDto): User {
-    const existing = Array.from(this.users.values()).find((u) => u.phone === dto.phone);
+  async create(dto: CreateUserDto): Promise<User> {
+    const existing = await this.userModel.findOne({ phone: dto.phone }).exec();
     if (existing) {
-      return existing; // idempotent user lookup
+      return existing; // idempotent lookup
     }
 
-    const user: User = {
-      id: `usr_${randomUUID().substring(0, 8)}`,
+    const created = new this.userModel({
       name: dto.name,
       phone: dto.phone,
       email: dto.email,
       role: dto.role ?? UserRole.CUSTOMER,
       isActive: true,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
+    });
 
-    this.users.set(user.id, user);
-    return user;
+    return created.save();
   }
 
-  findAll(): User[] {
-    return Array.from(this.users.values());
+  async findAll(): Promise<User[]> {
+    return this.userModel.find().exec();
   }
 
-  findById(id: string): User {
-    const user = this.users.get(id);
+  async findById(id: string): Promise<User> {
+    const user = await this.userModel.findById(id).exec();
     if (!user) {
       throw new NotFoundException(`User with id '${id}' not found`);
     }
     return user;
   }
 
-  findByPhone(phone: string): User | undefined {
-    return Array.from(this.users.values()).find((u) => u.phone === phone);
+  async findByPhone(phone: string): Promise<User | null> {
+    return this.userModel.findOne({ phone }).exec();
   }
 }

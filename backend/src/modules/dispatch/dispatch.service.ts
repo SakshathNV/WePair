@@ -4,10 +4,11 @@ import {
   ConflictException,
   BadRequestException,
 } from '@nestjs/common';
-import { DispatchSession, DispatchAttempt } from './entities/dispatch-session.entity.js';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
+import { DispatchSession, DispatchSessionDocument, DispatchAttempt } from './schemas/dispatch-session.schema.js';
 import { ProvidersService } from '../providers/providers.service.js';
 import { VehicleCategory, ProviderStatus, JobStatus } from '../../common/enums/index.js';
-import { randomUUID } from 'node:crypto';
 
 export interface DispatchResult {
   session: DispatchSession;
@@ -17,35 +18,34 @@ export interface DispatchResult {
 
 @Injectable()
 export class DispatchService {
-  private readonly sessions = new Map<string, DispatchSession>();
-  // Index by jobId for O(1) lookup
-  private readonly jobToSessionMap = new Map<string, string>();
-  // Mutex locks per job to guarantee atomic assignment winner
   private readonly claimLocks = new Set<string>();
-
-  private readonly BATCH_SIZE = 5; // 5-by-5 batch per Section 8
+  private readonly BATCH_SIZE = 5; // 5-by-5 batch per Section 8 of Blueprint
   private readonly BATCH_TTL_SECONDS = 45;
 
-  constructor(private readonly providersService: ProvidersService) {}
+  constructor(
+    @InjectModel(DispatchSession.name)
+    private readonly sessionModel: Model<DispatchSessionDocument>,
+    private readonly providersService: ProvidersService,
+  ) {}
 
-  initiateDispatch(
+  async initiateDispatch(
     jobId: string,
     caseId: string,
     incidentLat: number,
     incidentLng: number,
     requiredSkills: string[],
     vehicleCategory: VehicleCategory,
-  ): DispatchResult {
-    // 1. Find and rank eligible candidates
-    const rankedCandidates = this.providersService.findAndRankEligible(
+  ): Promise<DispatchResult> {
+    // 1. Find and rank eligible candidates from database
+    const rankedCandidates = await this.providersService.findAndRankEligible(
       incidentLat,
       incidentLng,
       requiredSkills,
       vehicleCategory,
-      30, // 30km radius
+      30,
     );
 
-    const candidateIds = rankedCandidates.map((c) => c.provider.id);
+    const candidateIds = rankedCandidates.map((c) => (c.provider as any).id || (c.provider as any)._id.toString());
 
     // Take first batch of up to 5 providers
     const firstBatch = candidateIds.slice(0, this.BATCH_SIZE);
@@ -57,8 +57,7 @@ export class DispatchService {
       notifiedAt: new Date(),
     }));
 
-    const session: DispatchSession = {
-      id: `disp_${randomUUID().substring(0, 8)}`,
+    const session = new this.sessionModel({
       jobId,
       caseId,
       status: firstBatch.length > 0 ? 'ACTIVE' : 'EXHAUSTED',
@@ -67,24 +66,19 @@ export class DispatchService {
       currentlyNotifiedProviderIds: firstBatch,
       batchExpiresAt: expiresAt,
       attempts,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
+    });
 
-    this.sessions.set(session.id, session);
-    this.jobToSessionMap.set(jobId, session.id);
+    const savedSession = await session.save();
 
     return {
-      session,
+      session: savedSession,
       notifiedCount: firstBatch.length,
       exhausted: firstBatch.length === 0,
     };
   }
 
-  getSessionByJobId(jobId: string): DispatchSession | undefined {
-    const sessionId = this.jobToSessionMap.get(jobId);
-    if (!sessionId) return undefined;
-    return this.sessions.get(sessionId);
+  async getSessionByJobId(jobId: string): Promise<DispatchSession | null> {
+    return this.sessionModel.findOne({ jobId }).exec();
   }
 
   /**
@@ -94,14 +88,14 @@ export class DispatchService {
   async attemptClaim(
     jobId: string,
     providerId: string,
-    verifyJobStatus: () => JobStatus,
+    verifyJobStatus: () => Promise<JobStatus>,
   ): Promise<{ winner: boolean; providerId: string }> {
-    const session = this.getSessionByJobId(jobId);
+    const session = await this.getSessionByJobId(jobId);
     if (!session) {
       throw new NotFoundException(`No active dispatch session for job '${jobId}'`);
     }
 
-    // Atomic CAS Lock
+    // Atomic CAS Lock per job
     if (this.claimLocks.has(jobId)) {
       throw new ConflictException({
         code: 'JOB_ALREADY_ASSIGNED',
@@ -112,8 +106,7 @@ export class DispatchService {
     this.claimLocks.add(jobId);
 
     try {
-      // Invariant check: Job must still be SEARCHING
-      const currentStatus = verifyJobStatus();
+      const currentStatus = await verifyJobStatus();
       if (currentStatus !== JobStatus.SEARCHING) {
         throw new ConflictException({
           code: 'JOB_ALREADY_ASSIGNED',
@@ -136,29 +129,40 @@ export class DispatchService {
         );
       }
 
-      // Claim won!
-      session.status = 'ASSIGNED';
-      session.winnerProviderId = providerId;
-      session.updatedAt = new Date();
+      // Claim won! Atomic database update
+      const updatedSession = await this.sessionModel
+        .findOneAndUpdate(
+          { jobId, status: 'ACTIVE' },
+          {
+            $set: {
+              status: 'ASSIGNED',
+              winnerProviderId: providerId,
+            },
+          },
+          { new: true },
+        )
+        .exec();
 
-      // Record outcome in attempt audit
-      const attempt = session.attempts.find(
-        (a) => a.providerId === providerId && a.batchNumber === session.currentBatch,
-      );
-      if (attempt) {
-        attempt.respondedAt = new Date();
-        attempt.outcome = 'ACCEPTED';
+      if (!updatedSession) {
+        throw new ConflictException({
+          code: 'JOB_ALREADY_ASSIGNED',
+          message: 'Job was already assigned to another provider.',
+        });
       }
 
-      // Reject all other notified candidates in this batch with ALREADY_ASSIGNED
-      for (const att of session.attempts) {
-        if (att.providerId !== providerId && !att.outcome) {
-          att.outcome = 'ALREADY_ASSIGNED';
+      // Update attempt records
+      for (const attempt of updatedSession.attempts) {
+        if (attempt.providerId === providerId && attempt.batchNumber === updatedSession.currentBatch) {
+          attempt.respondedAt = new Date();
+          attempt.outcome = 'ACCEPTED';
+        } else if (!attempt.outcome) {
+          attempt.outcome = 'ALREADY_ASSIGNED';
         }
       }
+      await updatedSession.save();
 
       // Mark winning provider as BUSY
-      this.providersService.updateStatus(providerId, ProviderStatus.BUSY);
+      await this.providersService.updateStatus(providerId, ProviderStatus.BUSY);
 
       return { winner: true, providerId };
     } finally {
@@ -169,8 +173,8 @@ export class DispatchService {
   /**
    * Advance to the next 5 providers if current batch times out or all reject
    */
-  advanceToNextBatch(jobId: string): DispatchResult {
-    const session = this.getSessionByJobId(jobId);
+  async advanceToNextBatch(jobId: string): Promise<DispatchResult> {
+    const session = await this.getSessionByJobId(jobId);
     if (!session || session.status !== 'ACTIVE') {
       return { session: session!, notifiedCount: 0, exhausted: true };
     }
@@ -185,14 +189,13 @@ export class DispatchService {
     if (nextBatch.length === 0) {
       session.status = 'EXHAUSTED';
       session.currentlyNotifiedProviderIds = [];
-      session.updatedAt = new Date();
-      return { session, notifiedCount: 0, exhausted: true };
+      const saved = await (session as any).save();
+      return { session: saved, notifiedCount: 0, exhausted: true };
     }
 
     session.currentBatch = nextBatchNumber;
     session.currentlyNotifiedProviderIds = nextBatch;
     session.batchExpiresAt = new Date(Date.now() + this.BATCH_TTL_SECONDS * 1000);
-    session.updatedAt = new Date();
 
     for (const pId of nextBatch) {
       session.attempts.push({
@@ -202,6 +205,7 @@ export class DispatchService {
       });
     }
 
-    return { session, notifiedCount: nextBatch.length, exhausted: false };
+    const saved = await (session as any).save();
+    return { session: saved, notifiedCount: nextBatch.length, exhausted: false };
   }
 }

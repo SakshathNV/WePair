@@ -1,9 +1,10 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
-import { Provider } from './entities/provider.entity.js';
+import { Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
+import { Provider, ProviderDocument } from './schemas/provider.schema.js';
 import { CreateProviderDto } from './dto/create-provider.dto.js';
 import { UpdateLocationDto } from './dto/update-location.dto.js';
 import { ProviderStatus, VehicleCategory } from '../../common/enums/index.js';
-import { randomUUID } from 'node:crypto';
 
 export interface RankedCandidate {
   provider: Provider;
@@ -13,18 +14,21 @@ export interface RankedCandidate {
 }
 
 @Injectable()
-export class ProvidersService {
-  private readonly providers = new Map<string, Provider>();
+export class ProvidersService implements OnModuleInit {
+  constructor(
+    @InjectModel(Provider.name) private readonly providerModel: Model<ProviderDocument>,
+  ) {}
 
-  constructor() {
-    this.seedDemoProviders();
+  async onModuleInit() {
+    const count = await this.providerModel.countDocuments();
+    if (count === 0) {
+      await this.seedDemoProviders();
+    }
   }
 
-  private seedDemoProviders() {
-    // Seed sample roadside mechanics, tow operators, and fuel assistance specialists
-    const demo: Partial<Provider>[] = [
+  private async seedDemoProviders() {
+    const demoProviders: Partial<Provider>[] = [
       {
-        id: 'prov-rajesh-towing',
         userId: 'usr_rajesh',
         name: 'Rajesh Towing & Recovery',
         phone: '+919811122233',
@@ -40,14 +44,14 @@ export class ProvidersService {
         rating: 4.9,
         totalJobsCompleted: 142,
         location: {
-          latitude: 12.9716, // Bangalore Central
+          latitude: 12.9716,
           longitude: 77.5946,
           address: 'MG Road, Bangalore',
           updatedAt: new Date(),
+          geo: { type: 'Point', coordinates: [77.5946, 12.9716] },
         },
       },
       {
-        id: 'prov-quickfix-roadside',
         userId: 'usr_suresh',
         name: 'QuickFix Roadside Mechanics',
         phone: '+919822233344',
@@ -67,10 +71,10 @@ export class ProvidersService {
           longitude: 77.599,
           address: 'Indiranagar, Bangalore',
           updatedAt: new Date(),
+          geo: { type: 'Point', coordinates: [77.599, 12.978] },
         },
       },
       {
-        id: 'prov-fuel-express',
         userId: 'usr_anand',
         name: 'Express Roadside & Fuel Care',
         phone: '+919833344455',
@@ -89,10 +93,10 @@ export class ProvidersService {
           longitude: 77.605,
           address: 'Koramangala, Bangalore',
           updatedAt: new Date(),
+          geo: { type: 'Point', coordinates: [77.605, 12.965] },
         },
       },
       {
-        id: 'prov-apex-mechanics',
         userId: 'usr_kiran',
         name: 'Apex Mobile Repairs',
         phone: '+919844455566',
@@ -112,10 +116,10 @@ export class ProvidersService {
           longitude: 77.589,
           address: 'Malleshwaram, Bangalore',
           updatedAt: new Date(),
+          geo: { type: 'Point', coordinates: [77.589, 12.982] },
         },
       },
       {
-        id: 'prov-blitz-rescue',
         userId: 'usr_vikram',
         name: 'Blitz Rapid Rescue',
         phone: '+919855566677',
@@ -130,10 +134,10 @@ export class ProvidersService {
           longitude: 77.61,
           address: 'HSR Layout, Bangalore',
           updatedAt: new Date(),
+          geo: { type: 'Point', coordinates: [77.61, 12.955] },
         },
       },
       {
-        id: 'prov-metro-towing',
         userId: 'usr_arun',
         name: 'Metro Heavy Haulers',
         phone: '+919866677788',
@@ -152,33 +156,29 @@ export class ProvidersService {
           longitude: 77.62,
           address: 'Hebbal, Bangalore',
           updatedAt: new Date(),
+          geo: { type: 'Point', coordinates: [77.62, 12.99] },
         },
       },
     ];
 
-    for (const item of demo) {
-      const fullProvider: Provider = {
-        id: item.id!,
-        userId: item.userId!,
-        name: item.name!,
-        phone: item.phone!,
-        skills: item.skills!,
-        supportedVehicleCategories: item.supportedVehicleCategories!,
-        status: item.status!,
-        isVerified: item.isVerified!,
-        rating: item.rating!,
-        totalJobsCompleted: item.totalJobsCompleted!,
-        location: item.location,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
-      this.providers.set(fullProvider.id, fullProvider);
-    }
+    await this.providerModel.insertMany(demoProviders);
   }
 
-  create(dto: CreateProviderDto): Provider {
-    const provider: Provider = {
-      id: `prov_${randomUUID().substring(0, 8)}`,
+  async create(dto: CreateProviderDto): Promise<Provider> {
+    const location =
+      dto.initialLatitude && dto.initialLongitude
+        ? {
+            latitude: dto.initialLatitude,
+            longitude: dto.initialLongitude,
+            updatedAt: new Date(),
+            geo: {
+              type: 'Point',
+              coordinates: [dto.initialLongitude, dto.initialLatitude],
+            },
+          }
+        : undefined;
+
+    const provider = new this.providerModel({
       userId: dto.userId,
       name: dto.name,
       phone: dto.phone,
@@ -188,56 +188,56 @@ export class ProvidersService {
       isVerified: true,
       rating: 5.0,
       totalJobsCompleted: 0,
-      location:
-        dto.initialLatitude && dto.initialLongitude
-          ? {
-              latitude: dto.initialLatitude,
-              longitude: dto.initialLongitude,
-              updatedAt: new Date(),
-            }
-          : undefined,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
+      location,
+    });
 
-    this.providers.set(provider.id, provider);
-    return provider;
+    return provider.save();
   }
 
-  findAll(): Provider[] {
-    return Array.from(this.providers.values());
+  async findAll(): Promise<Provider[]> {
+    return this.providerModel.find().exec();
   }
 
-  findById(id: string): Provider {
-    const provider = this.providers.get(id);
+  async findById(id: string): Promise<Provider> {
+    const provider = await this.providerModel.findById(id).exec();
     if (!provider) {
       throw new NotFoundException(`Provider with id '${id}' not found`);
     }
     return provider;
   }
 
-  findByUserId(userId: string): Provider | undefined {
-    return Array.from(this.providers.values()).find((p) => p.userId === userId);
+  async findByUserId(userId: string): Promise<Provider | null> {
+    return this.providerModel.findOne({ userId }).exec();
   }
 
-  updateLocation(id: string, dto: UpdateLocationDto): Provider {
-    const provider = this.findById(id);
+  async updateLocation(id: string, dto: UpdateLocationDto): Promise<Provider> {
+    const provider = await this.providerModel.findById(id).exec();
+    if (!provider) {
+      throw new NotFoundException(`Provider with id '${id}' not found`);
+    }
+
     provider.location = {
       latitude: dto.latitude,
       longitude: dto.longitude,
       address: dto.address ?? provider.location?.address,
       city: dto.city ?? provider.location?.city,
       updatedAt: new Date(),
+      geo: {
+        type: 'Point',
+        coordinates: [dto.longitude, dto.latitude],
+      },
     };
-    provider.updatedAt = new Date();
-    return provider;
+
+    return provider.save();
   }
 
-  updateStatus(id: string, status: ProviderStatus): Provider {
-    const provider = this.findById(id);
+  async updateStatus(id: string, status: ProviderStatus): Promise<Provider> {
+    const provider = await this.providerModel.findById(id).exec();
+    if (!provider) {
+      throw new NotFoundException(`Provider with id '${id}' not found`);
+    }
     provider.status = status;
-    provider.updatedAt = new Date();
-    return provider;
+    return provider.save();
   }
 
   /**
@@ -248,38 +248,36 @@ export class ProvidersService {
    * 4. Skills match
    * 5. Ranked by ETA, distance, and rating
    */
-  findAndRankEligible(
+  async findAndRankEligible(
     incidentLat: number,
     incidentLng: number,
     requiredSkills: string[],
     vehicleCategory: VehicleCategory,
-    maxRadiusKm: number = 25,
-  ): RankedCandidate[] {
+    maxRadiusKm: number = 30,
+  ): Promise<RankedCandidate[]> {
+    // Query online and verified providers who support the vehicle category
+    const candidatesQuery = await this.providerModel
+      .find({
+        status: ProviderStatus.ONLINE,
+        isVerified: true,
+        supportedVehicleCategories: vehicleCategory,
+        'location.latitude': { $exists: true },
+      })
+      .exec();
+
     const candidates: RankedCandidate[] = [];
 
-    for (const provider of this.providers.values()) {
-      // 1. Must be online and verified
-      if (provider.status !== ProviderStatus.ONLINE || !provider.isVerified) {
-        continue;
-      }
-
-      // 2. Location must exist
-      if (!provider.location) {
-        continue;
-      }
-
-      // 3. Vehicle compatibility
-      if (!provider.supportedVehicleCategories.includes(vehicleCategory)) {
-        continue;
-      }
-
-      // 4. Skills compatibility (must possess all required skills)
+    for (const provider of candidatesQuery) {
+      // Skills compatibility: provider must have all required skills
       const hasSkills = requiredSkills.every((skill) => provider.skills.includes(skill));
       if (!hasSkills) {
         continue;
       }
 
-      // 5. Distance calculation (Haversine formula)
+      if (!provider.location?.latitude || !provider.location?.longitude) {
+        continue;
+      }
+
       const distanceKm = this.calculateDistanceKm(
         incidentLat,
         incidentLng,
@@ -291,11 +289,10 @@ export class ProvidersService {
         continue;
       }
 
-      // Estimate ETA: assuming average urban speed of 30 km/h + 5 min dispatch buffer
+      // Estimate ETA: 30 km/h urban speed + 5 min dispatch buffer
       const estimatedEtaMinutes = Math.max(5, Math.round((distanceKm / 30) * 60 + 5));
 
-      // Composite score: lower distance is better, higher rating is better
-      // score = (50 / (distance + 1)) + (rating * 10)
+      // Composite ranking score: distance priority + reliability rating
       const score = 50 / (distanceKm + 1) + provider.rating * 10;
 
       candidates.push({
@@ -306,7 +303,6 @@ export class ProvidersService {
       });
     }
 
-    // Rank highest score first (closest ETA + highest reliability)
     return candidates.sort((a, b) => b.score - a.score);
   }
 

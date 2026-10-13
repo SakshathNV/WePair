@@ -1,12 +1,13 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
-import { ServiceItem } from './entities/service-item.entity.js';
+import { Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model, Types } from 'mongoose';
+import { ServiceItem, ServiceItemDocument } from './schemas/service-item.schema.js';
 import { ServiceCategory, VehicleCategory, FuelType } from '../../common/enums/index.js';
 
 @Injectable()
-export class CatalogService {
-  private readonly catalog: ServiceItem[] = [
+export class CatalogService implements OnModuleInit {
+  private readonly defaultCatalog: Partial<ServiceItem>[] = [
     {
-      id: 'srv-roadside-jumpstart',
       code: 'BATTERY_JUMPSTART',
       name: 'Battery Jump Start',
       description: 'On-site vehicle battery boost and electrical jump start',
@@ -24,7 +25,6 @@ export class CatalogService {
       estimatedDurationMinutes: 30,
     },
     {
-      id: 'srv-roadside-puncture',
       code: 'TYRE_PUNCTURE',
       name: 'Flat Tyre & Puncture Repair',
       description: 'On-demand roadside tubeless puncture repair or spare tyre swap',
@@ -43,7 +43,6 @@ export class CatalogService {
       estimatedDurationMinutes: 25,
     },
     {
-      id: 'srv-fuel-delivery',
       code: 'EMERGENCY_FUEL',
       name: 'Emergency Fuel Assistance',
       description: 'Authorized roadside fuel delivery dispatch (partner fulfilled)',
@@ -57,11 +56,10 @@ export class CatalogService {
         VehicleCategory.COMMERCIAL,
       ],
       compatibleFuelTypes: [FuelType.PETROL, FuelType.DIESEL],
-      basePrice: 299, // Delivery charge + fuel cost calculated dynamically
+      basePrice: 299,
       estimatedDurationMinutes: 35,
     },
     {
-      id: 'srv-towing-flatbed',
       code: 'TOWING_FLATBED',
       name: 'Flatbed Towing Service',
       description: 'Safe flatbed towing for luxury cars, EVs, and immobilized vehicles',
@@ -74,7 +72,6 @@ export class CatalogService {
       estimatedDurationMinutes: 60,
     },
     {
-      id: 'srv-towing-hydraulic',
       code: 'TOWING_HYDRAULIC',
       name: 'Hydraulic Towing & Winch Recovery',
       description: 'Under-lift hydraulic towing and ditch/accident recovery',
@@ -91,7 +88,6 @@ export class CatalogService {
       estimatedDurationMinutes: 45,
     },
     {
-      id: 'srv-workshop-inspection',
       code: 'WORKSHOP_INSPECTION',
       name: 'Full Workshop Diagnostic & Inspection',
       description: 'Comprehensive computerised vehicle inspection and mechanical diagnostics',
@@ -105,27 +101,44 @@ export class CatalogService {
     },
   ];
 
-  findAll(): ServiceItem[] {
-    return this.catalog;
+  constructor(
+    @InjectModel(ServiceItem.name) private readonly catalogModel: Model<ServiceItemDocument>,
+  ) {}
+
+  async onModuleInit() {
+    const count = await this.catalogModel.countDocuments();
+    if (count === 0) {
+      await this.catalogModel.insertMany(this.defaultCatalog);
+    }
   }
 
-  findById(id: string): ServiceItem {
-    const item = this.catalog.find((s) => s.id === id || s.code === id);
+  async findAll(): Promise<ServiceItem[]> {
+    return this.catalogModel.find().exec();
+  }
+
+  async findById(idOrCode: string): Promise<ServiceItem> {
+    const isObjectId = Types.ObjectId.isValid(idOrCode);
+    const query = isObjectId
+      ? { $or: [{ _id: idOrCode }, { code: idOrCode }] }
+      : { code: idOrCode };
+
+    const item = await this.catalogModel.findOne(query).exec();
     if (!item) {
-      throw new NotFoundException(`Service item with id or code '${id}' not found in catalog`);
+      throw new NotFoundException(`Service item '${idOrCode}' not found in catalog`);
     }
     return item;
   }
 
-  findByCategory(category: ServiceCategory): ServiceItem[] {
-    return this.catalog.filter((s) => s.category === category);
+  async findByCategory(category: ServiceCategory): Promise<ServiceItem[]> {
+    return this.catalogModel.find({ category }).exec();
   }
 
-  findEligibleServices(vehicleCategory: VehicleCategory, fuelType: FuelType): ServiceItem[] {
-    return this.catalog.filter(
-      (s) =>
-        s.compatibleVehicleCategories.includes(vehicleCategory) &&
-        s.compatibleFuelTypes.includes(fuelType),
-    );
+  async findEligibleServices(vehicleCategory: VehicleCategory, fuelType: FuelType): Promise<ServiceItem[]> {
+    return this.catalogModel
+      .find({
+        compatibleVehicleCategories: vehicleCategory,
+        compatibleFuelTypes: fuelType,
+      })
+      .exec();
   }
 }

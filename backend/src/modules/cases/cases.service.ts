@@ -1,39 +1,39 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
-import { ServiceCase } from './entities/case.entity.js';
+import { Injectable, NotFoundException } from '@nestjs/common';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
+import { ServiceCase, ServiceCaseDocument } from './schemas/case.schema.js';
 import { CreateCaseDto } from './dto/create-case.dto.js';
 import { CaseStatus } from '../../common/enums/index.js';
-import { randomUUID } from 'node:crypto';
 
 @Injectable()
 export class CasesService {
-  private readonly cases = new Map<string, ServiceCase>();
+  constructor(
+    @InjectModel(ServiceCase.name) private readonly caseModel: Model<ServiceCaseDocument>,
+  ) {}
 
-  create(dto: CreateCaseDto): ServiceCase {
-    // Idempotency check per Section 8 & 9 of Blueprint
+  async create(dto: CreateCaseDto): Promise<ServiceCase> {
+    // 1. Idempotency check per Blueprint Section 8 & 9
     if (dto.idempotencyKey) {
-      const existing = Array.from(this.cases.values()).find(
-        (c) => c.idempotencyKey === dto.idempotencyKey,
-      );
+      const existing = await this.caseModel.findOne({ idempotencyKey: dto.idempotencyKey }).exec();
       if (existing) {
         return existing;
       }
     }
 
-    // Check if customer already has an active duplicate case at the same location
-    const activeCase = Array.from(this.cases.values()).find(
-      (c) =>
-        c.customerId === dto.customerId &&
-        c.vehicleId === dto.vehicleId &&
-        (c.status === CaseStatus.OPEN || c.status === CaseStatus.IN_PROGRESS),
-    );
+    // 2. Prevent duplicate active case creation for the same customer + vehicle
+    const activeCase = await this.caseModel
+      .findOne({
+        customerId: dto.customerId,
+        vehicleId: dto.vehicleId,
+        status: { $in: [CaseStatus.OPEN, CaseStatus.IN_PROGRESS] },
+      })
+      .exec();
 
     if (activeCase && !dto.idempotencyKey) {
-      // Return existing active case to prevent duplicate dispatch requests
       return activeCase;
     }
 
-    const serviceCase: ServiceCase = {
-      id: `case_${randomUUID().substring(0, 8)}`,
+    const serviceCase = new this.caseModel({
       customerId: dto.customerId,
       vehicleId: dto.vehicleId,
       location: {
@@ -46,54 +46,60 @@ export class CasesService {
       jobIds: [],
       notes: dto.notes,
       idempotencyKey: dto.idempotencyKey,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
+    });
 
-    this.cases.set(serviceCase.id, serviceCase);
-    return serviceCase;
+    return serviceCase.save();
   }
 
-  findAll(): ServiceCase[] {
-    return Array.from(this.cases.values());
+  async findAll(): Promise<ServiceCase[]> {
+    return this.caseModel.find().exec();
   }
 
-  findById(id: string): ServiceCase {
-    const serviceCase = this.cases.get(id);
+  async findById(id: string): Promise<ServiceCase> {
+    const serviceCase = await this.caseModel.findById(id).exec();
     if (!serviceCase) {
       throw new NotFoundException(`ServiceCase with id '${id}' not found`);
     }
     return serviceCase;
   }
 
-  findByCustomerId(customerId: string): ServiceCase[] {
-    return Array.from(this.cases.values()).filter((c) => c.customerId === customerId);
+  async findByCustomerId(customerId: string): Promise<ServiceCase[]> {
+    return this.caseModel.find({ customerId }).exec();
   }
 
-  addJobToCase(caseId: string, jobId: string): ServiceCase {
-    const serviceCase = this.findById(caseId);
+  async addJobToCase(caseId: string, jobId: string): Promise<ServiceCase> {
+    const serviceCase = await this.caseModel.findById(caseId).exec();
+    if (!serviceCase) {
+      throw new NotFoundException(`ServiceCase with id '${caseId}' not found`);
+    }
+
     if (!serviceCase.jobIds.includes(jobId)) {
       serviceCase.jobIds.push(jobId);
     }
     serviceCase.status = CaseStatus.IN_PROGRESS;
-    serviceCase.updatedAt = new Date();
-    return serviceCase;
+    return serviceCase.save();
   }
 
-  cancelCase(caseId: string, reason?: string): ServiceCase {
-    const serviceCase = this.findById(caseId);
+  async cancelCase(caseId: string, reason?: string): Promise<ServiceCase> {
+    const serviceCase = await this.caseModel.findById(caseId).exec();
+    if (!serviceCase) {
+      throw new NotFoundException(`ServiceCase with id '${caseId}' not found`);
+    }
+
     serviceCase.status = CaseStatus.CANCELLED;
     if (reason) {
       serviceCase.notes = `${serviceCase.notes ? serviceCase.notes + ' | ' : ''}Cancellation Reason: ${reason}`;
     }
-    serviceCase.updatedAt = new Date();
-    return serviceCase;
+    return serviceCase.save();
   }
 
-  resolveCase(caseId: string): ServiceCase {
-    const serviceCase = this.findById(caseId);
+  async resolveCase(caseId: string): Promise<ServiceCase> {
+    const serviceCase = await this.caseModel.findById(caseId).exec();
+    if (!serviceCase) {
+      throw new NotFoundException(`ServiceCase with id '${caseId}' not found`);
+    }
+
     serviceCase.status = CaseStatus.RESOLVED;
-    serviceCase.updatedAt = new Date();
-    return serviceCase;
+    return serviceCase.save();
   }
 }
