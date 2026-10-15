@@ -46,7 +46,7 @@ export class ServiceCase {
   @Prop({ type: CaseLocation, required: true })
   location: CaseLocation;
 
-  @Prop({ required: true, enum: CaseStatus, default: CaseStatus.OPEN, index: true })
+  @Prop({ type: String, required: true, enum: Object.values(CaseStatus), default: CaseStatus.OPEN, index: true })
   status: CaseStatus;
 
   @Prop({ type: [String], default: [] })

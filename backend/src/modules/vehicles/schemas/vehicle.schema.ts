@@ -22,10 +22,10 @@ export class Vehicle {
   @Prop({ required: true, index: true })
   ownerId: string;
 
-  @Prop({ required: true, enum: VehicleCategory })
+  @Prop({ type: String, required: true, enum: Object.values(VehicleCategory) })
   category: VehicleCategory;
 
-  @Prop({ required: true, enum: FuelType })
+  @Prop({ type: String, required: true, enum: Object.values(FuelType) })
   fuelType: FuelType;
 
   @Prop({ required: true })

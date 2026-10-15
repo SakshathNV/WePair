@@ -2,19 +2,20 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
-  ConflictException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { ConfigService } from '@nestjs/config';
 import Razorpay from 'razorpay';
-import { createHmac } from 'node:crypto';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import { Payment, PaymentDocument } from './schemas/payment.schema.js';
 import { CreatePaymentOrderDto } from './dto/create-order.dto.js';
 import { VerifyPaymentDto } from './dto/verify-payment.dto.js';
 import { RefundDto } from './dto/refund.dto.js';
-import { PaymentStatus } from '../../common/enums/index.js';
+import { PaymentStatus, UserRole } from '../../common/enums/index.js';
 import { JobsService } from '../jobs/jobs.service.js';
+import { CasesService } from '../cases/cases.service.js';
 
 @Injectable()
 export class PaymentsService {
@@ -25,6 +26,7 @@ export class PaymentsService {
     @InjectModel(Payment.name) private readonly paymentModel: Model<PaymentDocument>,
     private readonly configService: ConfigService,
     private readonly jobsService: JobsService,
+    private readonly casesService: CasesService,
   ) {
     const keyId = this.configService.get<string>('RAZORPAY_KEY_ID');
     this.keySecret = this.configService.get<string>('RAZORPAY_KEY_SECRET') || '';
@@ -35,10 +37,24 @@ export class PaymentsService {
     });
   }
 
-  async createOrder(dto: CreatePaymentOrderDto) {
+  /**
+   * Constant-time string comparison to prevent timing attacks on cryptographic signatures
+   * (ASVS V2.10.1, V6.2.1)
+   */
+  private timingSafeStringEqual(a: string, b: string): boolean {
+    if (!a || !b) return false;
+    const bufA = Buffer.from(a, 'utf8');
+    const bufB = Buffer.from(b, 'utf8');
+    if (bufA.length !== bufB.length) return false;
+    return timingSafeEqual(bufA, bufB);
+  }
+
+  async createOrder(dto: CreatePaymentOrderDto, callerUser?: any) {
     // 1. Idempotency guard per Section 12 of Blueprint
     if (dto.idempotencyKey) {
-      const existing = await this.paymentModel.findOne({ idempotencyKey: dto.idempotencyKey }).exec();
+      const existing = await this.paymentModel
+        .findOne({ idempotencyKey: dto.idempotencyKey })
+        .exec();
       if (existing) {
         return existing;
       }
@@ -47,28 +63,54 @@ export class PaymentsService {
     // 2. Validate job existence
     const job = await this.jobsService.findById(dto.jobId);
 
-    const amountInPaise = Math.round(dto.amount * 100);
+    // 3. Prevent client-side price tampering (ASVS V5.1.1, V5.3.3)
+    // Server enforces authoritative job quote amount
+    if (dto.amount !== undefined && Math.abs(dto.amount - job.quoteAmount) > 0.01) {
+      throw new BadRequestException(
+        `Price tampering detected: client amount (₹${dto.amount}) does not match official job quote amount (₹${job.quoteAmount}).`,
+      );
+    }
+    const authoritativeAmount = job.quoteAmount;
+
+    // 4. Validate ownership of incident
+    const serviceCase = await this.casesService.findById(job.caseId);
+    if (
+      callerUser &&
+      callerUser.role !== UserRole.ADMIN &&
+      serviceCase.customerId !== callerUser.id
+    ) {
+      throw new ForbiddenException(
+        'Access denied. You can only initiate payment for your own service incident.',
+      );
+    }
+
+    const customerId =
+      callerUser && callerUser.role !== UserRole.ADMIN
+        ? callerUser.id
+        : dto.customerId || serviceCase.customerId;
+
+    const amountInPaise = Math.round(authoritativeAmount * 100);
     const receipt = `rcpt_${dto.jobId.slice(-8)}_${Date.now().toString().slice(-4)}`;
 
-    // 3. Create order on Razorpay
+    // 5. Create order on Razorpay
     const order = await this.razorpay.orders.create({
       amount: amountInPaise,
       currency: dto.currency || 'INR',
       receipt,
       notes: {
         jobId: dto.jobId,
-        customerId: dto.customerId,
+        customerId,
         serviceName: job.serviceName,
       },
     });
 
-    // 4. Save Payment record in MongoDB Atlas
+    // 6. Save Payment record in MongoDB Atlas
     const payment = new this.paymentModel({
       jobId: dto.jobId,
       caseId: job.caseId,
-      customerId: dto.customerId,
+      customerId,
       providerId: job.providerId,
-      amount: dto.amount,
+      amount: authoritativeAmount,
       currency: dto.currency || 'INR',
       status: PaymentStatus.PENDING,
       razorpayOrderId: order.id,
@@ -90,21 +132,27 @@ export class PaymentsService {
   }
 
   async verifyPayment(dto: VerifyPaymentDto) {
-    const payment = await this.paymentModel.findOne({ razorpayOrderId: dto.razorpayOrderId }).exec();
+    const payment = await this.paymentModel
+      .findOne({ razorpayOrderId: dto.razorpayOrderId })
+      .exec();
     if (!payment) {
-      throw new NotFoundException(`Payment with orderId '${dto.razorpayOrderId}' not found`);
+      throw new NotFoundException(
+        `Payment with orderId '${dto.razorpayOrderId}' not found`,
+      );
     }
 
-    // Server-side cryptographic signature verification
+    // Server-side cryptographic signature verification with constant-time equality
     const generatedSignature = createHmac('sha256', this.keySecret)
       .update(`${dto.razorpayOrderId}|${dto.razorpayPaymentId}`)
       .digest('hex');
 
-    if (generatedSignature !== dto.razorpaySignature) {
+    if (!this.timingSafeStringEqual(generatedSignature, dto.razorpaySignature)) {
       payment.status = PaymentStatus.FAILED;
       payment.failureReason = 'Cryptographic signature mismatch';
       await payment.save();
-      throw new BadRequestException('Invalid payment signature. Verification failed.');
+      throw new BadRequestException(
+        'Invalid payment signature. Cryptographic verification failed.',
+      );
     }
 
     payment.status = PaymentStatus.CAPTURED;
@@ -163,13 +211,15 @@ export class PaymentsService {
   }
 
   async webhookHandler(body: any, signature: string) {
-    // Webhook verification
-    const webhookSecret = this.keySecret;
+    // Webhook verification using constant-time comparison
+    const webhookSecret =
+      this.configService.get<string>('RAZORPAY_WEBHOOK_SECRET') || this.keySecret;
+    const payload = typeof body === 'string' ? body : JSON.stringify(body);
     const expectedSignature = createHmac('sha256', webhookSecret)
-      .update(JSON.stringify(body))
+      .update(payload)
       .digest('hex');
 
-    if (expectedSignature !== signature) {
+    if (!this.timingSafeStringEqual(expectedSignature, signature)) {
       throw new BadRequestException('Invalid webhook signature');
     }
 

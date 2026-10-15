@@ -37,7 +37,7 @@ export class Payment {
   @Prop({ default: 'INR' })
   currency: string;
 
-  @Prop({ required: true, enum: PaymentStatus, default: PaymentStatus.INITIATED, index: true })
+  @Prop({ type: String, required: true, enum: Object.values(PaymentStatus), default: PaymentStatus.INITIATED, index: true })
   status: PaymentStatus;
 
   @Prop({ unique: true, sparse: true, index: true })

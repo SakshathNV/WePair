@@ -1,5 +1,17 @@
-import { IsEnum, IsNotEmpty, IsOptional, IsString, MinLength } from 'class-validator';
+import {
+  IsEnum,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  MinLength,
+  MaxLength,
+} from 'class-validator';
 import { UserRole } from '../../../common/enums/index.js';
+
+export enum RegistrationRole {
+  CUSTOMER = 'CUSTOMER',
+  PROVIDER = 'PROVIDER',
+}
 
 export class RegisterDto {
   @IsNotEmpty()
@@ -16,10 +28,11 @@ export class RegisterDto {
 
   @IsNotEmpty()
   @IsString()
-  @MinLength(6)
+  @MinLength(8, { message: 'Password must be at least 8 characters long' })
+  @MaxLength(128, { message: 'Password cannot exceed 128 characters' })
   password: string;
 
   @IsOptional()
-  @IsEnum(UserRole)
+  @IsEnum(RegistrationRole, { message: 'Role must be either CUSTOMER or PROVIDER' })
   role?: UserRole = UserRole.CUSTOMER;
 }

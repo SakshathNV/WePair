@@ -61,10 +61,10 @@ export class Provider {
   @Prop({ type: [String], default: [] })
   skills: string[];
 
-  @Prop({ type: [String], enum: VehicleCategory, default: [] })
+  @Prop({ type: [String], enum: Object.values(VehicleCategory), default: [] })
   supportedVehicleCategories: VehicleCategory[];
 
-  @Prop({ required: true, enum: ProviderStatus, default: ProviderStatus.OFFLINE, index: true })
+  @Prop({ type: String, required: true, enum: Object.values(ProviderStatus), default: ProviderStatus.OFFLINE, index: true })
   status: ProviderStatus;
 
   @Prop({ default: true })

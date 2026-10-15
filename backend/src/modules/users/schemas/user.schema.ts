@@ -32,7 +32,7 @@ export class User {
   @Prop({ required: true, select: false })
   password: string;
 
-  @Prop({ required: true, enum: UserRole, default: UserRole.CUSTOMER })
+  @Prop({ type: String, required: true, enum: Object.values(UserRole), default: UserRole.CUSTOMER })
   role: UserRole;
 
   @Prop({ default: true })

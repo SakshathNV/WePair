@@ -28,7 +28,7 @@ export class ServiceItem {
   @Prop({ required: true })
   description: string;
 
-  @Prop({ required: true, enum: ServiceCategory, index: true })
+  @Prop({ type: String, required: true, enum: Object.values(ServiceCategory), index: true })
   category: ServiceCategory;
 
   @Prop({ required: true })
@@ -37,10 +37,10 @@ export class ServiceItem {
   @Prop({ type: [String], default: [] })
   requiredSkills: string[];
 
-  @Prop({ type: [String], enum: VehicleCategory, default: [] })
+  @Prop({ type: [String], enum: Object.values(VehicleCategory), default: [] })
   compatibleVehicleCategories: VehicleCategory[];
 
-  @Prop({ type: [String], enum: FuelType, default: [] })
+  @Prop({ type: [String], enum: Object.values(FuelType), default: [] })
   compatibleFuelTypes: FuelType[];
 
   @Prop({ required: true })

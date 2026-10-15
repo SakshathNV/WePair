@@ -157,6 +157,10 @@ export class JobsService {
       throw new NotFoundException(`Job with id '${id}' not found`);
     }
 
+    if (!dto.providerId) {
+      throw new BadRequestException('Provider ID is required to accept job');
+    }
+
     // Verify atomic claim with Dispatch Engine (mutex + CAS)
     await this.dispatchService.attemptClaim(id, dto.providerId, async () => job.status);
 
@@ -266,10 +270,35 @@ export class JobsService {
       throw new ForbiddenException('Only the assigned provider can start service.');
     }
 
-    // OTP validation per Blueprint Section 4 & 13
-    if (job.otp !== dto.otp) {
-      throw new BadRequestException('Invalid OTP. Customer verification handshake failed.');
+    if (job.isOtpLocked) {
+      throw new ForbiddenException(
+        'Arrival verification is locked due to excessive failed attempts. Please contact platform support.',
+      );
     }
+
+    // OTP validation with brute-force defense (ASVS V2.2.1, V11.1.4)
+    if (job.otp !== dto.otp) {
+      job.failedOtpAttempts = (job.failedOtpAttempts || 0) + 1;
+      if (job.failedOtpAttempts >= 5) {
+        job.isOtpLocked = true;
+        job.timeline.push({
+          status: job.status,
+          timestamp: new Date(),
+          note: 'SECURITY ALERT: Verification locked after 5 consecutive failed OTP attempts.',
+        });
+        await job.save();
+        throw new ForbiddenException(
+          'Verification locked due to excessive failed attempts (5/5). Please contact platform support.',
+        );
+      }
+      await job.save();
+      throw new BadRequestException(
+        `Invalid OTP. Customer verification handshake failed (${job.failedOtpAttempts}/5 attempts used).`,
+      );
+    }
+
+    // Reset attempt counter upon successful validation
+    job.failedOtpAttempts = 0;
 
     JobStateMachine.validateTransition(job.status, JobStatus.SERVICE_STARTED);
     job.status = JobStatus.SERVICE_STARTED;

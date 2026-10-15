@@ -15,6 +15,8 @@ import { Roles } from '../auth/decorators/roles.decorator.js';
 import { UserRole } from '../../common/enums/index.js';
 
 @Controller('v1/admin')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(UserRole.ADMIN)
 export class AdminController {
   constructor(private readonly adminService: AdminService) {}
 

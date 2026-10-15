@@ -33,7 +33,7 @@ export class Notification {
   @Prop({ required: true, index: true })
   recipientId: string;
 
-  @Prop({ required: true, enum: NotificationType })
+  @Prop({ type: String, required: true, enum: Object.values(NotificationType) })
   type: NotificationType;
 
   @Prop({ required: true })

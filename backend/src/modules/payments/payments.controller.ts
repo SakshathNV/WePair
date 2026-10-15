@@ -7,27 +7,47 @@ import {
   Headers,
   HttpCode,
   HttpStatus,
+  UseGuards,
+  ForbiddenException,
 } from '@nestjs/common';
 import { PaymentsService } from './payments.service.js';
+import { JobsService } from '../jobs/jobs.service.js';
+import { CasesService } from '../cases/cases.service.js';
 import { CreatePaymentOrderDto } from './dto/create-order.dto.js';
 import { VerifyPaymentDto } from './dto/verify-payment.dto.js';
 import { RefundDto } from './dto/refund.dto.js';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.js';
+import { RolesGuard } from '../auth/guards/roles.guard.js';
+import { CurrentUser } from '../auth/decorators/current-user.decorator.js';
+import { Roles } from '../auth/decorators/roles.decorator.js';
+import { UserRole } from '../../common/enums/index.js';
 
 @Controller('v1/payments')
 export class PaymentsController {
-  constructor(private readonly paymentsService: PaymentsService) {}
+  constructor(
+    private readonly paymentsService: PaymentsService,
+    private readonly jobsService: JobsService,
+    private readonly casesService: CasesService,
+  ) {}
 
   @Post('create-order')
-  createOrder(@Body() createOrderDto: CreatePaymentOrderDto) {
-    return this.paymentsService.createOrder(createOrderDto);
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  createOrder(
+    @Body() createOrderDto: CreatePaymentOrderDto,
+    @CurrentUser() currentUser: any,
+  ) {
+    return this.paymentsService.createOrder(createOrderDto, currentUser);
   }
 
   @Post('verify')
+  @UseGuards(JwtAuthGuard, RolesGuard)
   verifyPayment(@Body() verifyDto: VerifyPaymentDto) {
     return this.paymentsService.verifyPayment(verifyDto);
   }
 
   @Post('refund')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
   initiateRefund(@Body() refundDto: RefundDto) {
     return this.paymentsService.initiateRefund(refundDto);
   }
@@ -42,17 +62,55 @@ export class PaymentsController {
   }
 
   @Get('job/:jobId')
-  findByJobId(@Param('jobId') jobId: string) {
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  async findByJobId(
+    @Param('jobId') jobId: string,
+    @CurrentUser() currentUser: any,
+  ) {
+    const job = await this.jobsService.findById(jobId);
+    if (currentUser.role !== UserRole.ADMIN) {
+      const serviceCase = await this.casesService.findById(job.caseId);
+      if (
+        serviceCase.customerId !== currentUser.id &&
+        job.providerId !== currentUser.id
+      ) {
+        throw new ForbiddenException(
+          'Access denied. You do not have permission to view payment records for this job.',
+        );
+      }
+    }
     return this.paymentsService.findByJobId(jobId);
   }
 
   @Get('customer/:customerId')
-  findByCustomerId(@Param('customerId') customerId: string) {
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  findByCustomerId(
+    @Param('customerId') customerId: string,
+    @CurrentUser() currentUser: any,
+  ) {
+    if (
+      currentUser.role !== UserRole.ADMIN &&
+      currentUser.id !== customerId
+    ) {
+      throw new ForbiddenException(
+        'Access denied. You cannot view another customer’s billing history.',
+      );
+    }
     return this.paymentsService.findByCustomerId(customerId);
   }
 
   @Get(':id')
-  findById(@Param('id') id: string) {
-    return this.paymentsService.findById(id);
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  async findById(@Param('id') id: string, @CurrentUser() currentUser: any) {
+    const payment = await this.paymentsService.findById(id);
+    if (
+      currentUser.role !== UserRole.ADMIN &&
+      payment.customerId !== currentUser.id
+    ) {
+      throw new ForbiddenException(
+        'Access denied. You do not have permission to inspect this payment receipt.',
+      );
+    }
+    return payment;
   }
 }

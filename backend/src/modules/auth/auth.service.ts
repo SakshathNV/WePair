@@ -3,12 +3,14 @@ import {
   UnauthorizedException,
   ConflictException,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import bcrypt from 'bcrypt';
 import { UsersService } from '../users/users.service.js';
 import { RegisterDto } from './dto/register.dto.js';
 import { LoginDto } from './dto/login.dto.js';
+import { UserRole } from '../../common/enums/index.js';
 
 @Injectable()
 export class AuthService {
@@ -18,6 +20,10 @@ export class AuthService {
   ) {}
 
   async register(dto: RegisterDto) {
+    if (dto.role === UserRole.ADMIN) {
+      throw new ForbiddenException('Self-registration as administrator is strictly forbidden.');
+    }
+
     const existing = await this.usersService.findByPhone(dto.phone);
     if (existing) {
       throw new ConflictException(`User with phone ${dto.phone} already exists`);

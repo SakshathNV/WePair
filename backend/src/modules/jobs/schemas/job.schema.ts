@@ -6,7 +6,7 @@ export type JobDocument = HydratedDocument<Job>;
 
 @Schema({ _id: false })
 export class JobTimelineEvent {
-  @Prop({ required: true, enum: JobStatus })
+  @Prop({ type: String, required: true, enum: Object.values(JobStatus) })
   status: JobStatus;
 
   @Prop({ required: true, default: () => new Date() })
@@ -40,13 +40,13 @@ export class Job {
   @Prop({ required: true })
   serviceName: string;
 
-  @Prop({ required: true, enum: ServiceCategory })
+  @Prop({ type: String, required: true, enum: Object.values(ServiceCategory) })
   category: ServiceCategory;
 
   @Prop({ index: true })
   providerId?: string;
 
-  @Prop({ required: true, enum: JobStatus, default: JobStatus.CREATED, index: true })
+  @Prop({ type: String, required: true, enum: Object.values(JobStatus), default: JobStatus.CREATED, index: true })
   status: JobStatus;
 
   @Prop({ required: true })
@@ -60,6 +60,12 @@ export class Job {
 
   @Prop({ type: [JobTimelineEvent], default: [] })
   timeline: JobTimelineEvent[];
+
+  @Prop({ default: 0 })
+  failedOtpAttempts: number;
+
+  @Prop({ default: false })
+  isOtpLocked: boolean;
 
   @Prop()
   paymentId?: string;
