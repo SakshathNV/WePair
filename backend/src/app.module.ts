@@ -26,15 +26,14 @@ import { AdminModule } from './modules/admin/admin.module.js';
     MongooseModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: (configService: ConfigService) => {
-        const uri = configService.get<string>('MONGODB_URI');
-        if (!uri) {
-          throw new Error(
-            'MONGODB_URI is not defined in environment variables. Check your .env file.',
-          );
-        }
+        const uri =
+          configService.get<string>('MONGODB_URI') ||
+          'mongodb://127.0.0.1:27017/wepair';
+        const dbName =
+          configService.get<string>('MONGODB_DB_NAME') || 'wepair';
         return {
           uri,
-          dbName: configService.get<string>('MONGODB_DB_NAME', 'wepair'),
+          dbName,
         };
       },
       inject: [ConfigService],
