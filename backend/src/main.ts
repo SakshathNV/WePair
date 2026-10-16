@@ -2,6 +2,10 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import helmet from 'helmet';
 import { AppModule } from './app.module.js';
+import * as dns from 'dns';
+
+// Use reliable DNS servers for SRV record resolution (fixes ECONNREFUSED on some networks)
+dns.setServers(['8.8.8.8', '1.1.1.1']);
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
